@@ -1,0 +1,857 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, TrendingUp, TrendingDown, Target, Calendar, Bell, Lightbulb, BarChart3, Coffee, Utensils, Moon, Apple, MessageCircle, Send, X, Minimize2 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+
+export default function CalorieTracker() {
+  const [goal, setGoal] = useState(2000);
+  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [allData, setAllData] = useState({});
+  const [foodName, setFoodName] = useState('');
+  const [calories, setCalories] = useState('');
+  const [protein, setProtein] = useState('');
+  const [carbs, setCarbs] = useState('');
+  const [fat, setFat] = useState('');
+  const [category, setCategory] = useState('breakfast');
+  const [view, setView] = useState('today');
+  const [notifications, setNotifications] = useState(true);
+  const [userWeight, setUserWeight] = useState(70);
+  const [targetWeight, setTargetWeight] = useState(65);
+  const [height, setHeight] = useState(170);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const chatEndRef = useRef(null);
+  
+  const foodDatabase = {
+    'Apfel': { cal: 52, protein: 0.3, carbs: 14, fat: 0.2 },
+    'Banane': { cal: 89, protein: 1.1, carbs: 23, fat: 0.3 },
+    'Vollkornbrot (Scheibe)': { cal: 65, protein: 3, carbs: 12, fat: 1 },
+    'Ei': { cal: 155, protein: 13, carbs: 1, fat: 11 },
+    'Hähnchenbrust (100g)': { cal: 165, protein: 31, carbs: 0, fat: 3.6 },
+    'Reis gekocht (100g)': { cal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+    'Pasta gekocht (100g)': { cal: 131, protein: 5, carbs: 25, fat: 1.1 },
+    'Salat': { cal: 15, protein: 1, carbs: 3, fat: 0.2 },
+    'Joghurt (150g)': { cal: 90, protein: 5, carbs: 6, fat: 3.5 },
+    'Pizza (Stück)': { cal: 285, protein: 12, carbs: 36, fat: 10 },
+    'Burger': { cal: 540, protein: 25, carbs: 45, fat: 25 },
+    'Pommes (100g)': { cal: 312, protein: 3.4, carbs: 41, fat: 15 },
+    'Schokolade (Riegel)': { cal: 235, protein: 3, carbs: 26, fat: 13 },
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem('calorieTrackerData');
+    if (saved) {
+      setAllData(JSON.parse(saved));
+    }
+    
+    const savedSettings = localStorage.getItem('trackerSettings');
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings);
+      setGoal(settings.goal || 2000);
+      setNotifications(settings.notifications !== false);
+      setUserWeight(settings.userWeight || 70);
+      setTargetWeight(settings.targetWeight || 65);
+      setHeight(settings.height || 170);
+    }
+
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('calorieTrackerData', JSON.stringify(allData));
+  }, [allData]);
+
+  useEffect(() => {
+    localStorage.setItem('trackerSettings', JSON.stringify({
+      goal, notifications, userWeight, targetWeight, height
+    }));
+  }, [goal, notifications, userWeight, targetWeight, height]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
+  useEffect(() => {
+    if (!notifications || Notification.permission !== 'granted') return;
+
+    const now = new Date();
+    const scheduleNotification = (hour, minute, message) => {
+      const targetTime = new Date();
+      targetTime.setHours(hour, minute, 0, 0);
+      
+      if (targetTime <= now) {
+        targetTime.setDate(targetTime.getDate() + 1);
+      }
+      
+      const timeUntil = targetTime - now;
+      return setTimeout(() => {
+        const todayData = allData[currentDate] || { entries: [] };
+        const consumed = todayData.entries.reduce((sum, e) => sum + e.calories, 0);
+        const remaining = goal - consumed;
+        
+        new Notification('Kalorientracker Erinnerung', {
+          body: `${message} - Noch ${remaining} kcal verfügbar für heute!`,
+          icon: '🍽️'
+        });
+      }, timeUntil);
+    };
+
+    const timers = [
+      scheduleNotification(8, 0, 'Zeit für Frühstück'),
+      scheduleNotification(12, 30, 'Mittagszeit'),
+      scheduleNotification(18, 0, 'Abendessenzeit'),
+    ];
+
+    return () => timers.forEach(clearTimeout);
+  }, [notifications, currentDate, allData, goal]);
+
+  const todayData = allData[currentDate] || { entries: [], weight: null };
+  const totalCalories = todayData.entries.reduce((sum, e) => sum + e.calories, 0);
+  const totalProtein = todayData.entries.reduce((sum, e) => sum + (e.protein || 0), 0);
+  const totalCarbs = todayData.entries.reduce((sum, e) => sum + (e.carbs || 0), 0);
+  const totalFat = todayData.entries.reduce((sum, e) => sum + (e.fat || 0), 0);
+  const remaining = goal - totalCalories;
+  const percentage = (totalCalories / goal) * 100;
+
+  const bmi = (userWeight / ((height / 100) ** 2)).toFixed(1);
+  
+  const calculateCalorieGoal = () => {
+    const bmr = 10 * userWeight + 6.25 * height - 5 * 30 + 5;
+    const tdee = bmr * 1.5;
+    const diff = (targetWeight - userWeight) * 7700 / 90;
+    return Math.round(tdee + diff);
+  };
+
+  const addEntry = () => {
+    if (foodName && calories) {
+      const newEntry = {
+        id: Date.now(),
+        name: foodName,
+        calories: parseInt(calories),
+        protein: parseFloat(protein) || 0,
+        carbs: parseFloat(carbs) || 0,
+        fat: parseFloat(fat) || 0,
+        category,
+        time: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+      };
+      
+      setAllData({
+        ...allData,
+        [currentDate]: {
+          ...todayData,
+          entries: [...todayData.entries, newEntry]
+        }
+      });
+      
+      setFoodName('');
+      setCalories('');
+      setProtein('');
+      setCarbs('');
+      setFat('');
+    }
+  };
+
+  const selectFood = (food) => {
+    const data = foodDatabase[food];
+    setFoodName(food);
+    setCalories(data.cal.toString());
+    setProtein(data.protein.toString());
+    setCarbs(data.carbs.toString());
+    setFat(data.fat.toString());
+  };
+
+  const deleteEntry = (id) => {
+    setAllData({
+      ...allData,
+      [currentDate]: {
+        ...todayData,
+        entries: todayData.entries.filter(e => e.id !== id)
+      }
+    });
+  };
+
+  const updateWeight = (weight) => {
+    setAllData({
+      ...allData,
+      [currentDate]: {
+        ...todayData,
+        weight: parseFloat(weight)
+      }
+    });
+  };
+
+  const getLast7Days = () => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const data = allData[dateStr] || { entries: [] };
+      const cal = data.entries.reduce((sum, e) => sum + e.calories, 0);
+      days.push({
+        date: d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+        kalorien: cal,
+        ziel: goal,
+        gewicht: data.weight || null
+      });
+    }
+    return days;
+  };
+
+  const getCategoryData = () => {
+    const categories = { breakfast: 0, lunch: 0, dinner: 0, snacks: 0 };
+    todayData.entries.forEach(e => {
+      categories[e.category] = (categories[e.category] || 0) + e.calories;
+    });
+    return [
+      { name: 'Frühstück', wert: categories.breakfast },
+      { name: 'Mittagessen', wert: categories.lunch },
+      { name: 'Abendessen', wert: categories.dinner },
+      { name: 'Snacks', wert: categories.snacks },
+    ];
+  };
+
+  const getTips = () => {
+    const tips = [];
+    const weekData = getLast7Days();
+    const avgCal = weekData.reduce((sum, d) => sum + d.kalorien, 0) / 7;
+    
+    if (avgCal > goal * 1.1) {
+      tips.push('💡 Tipp: Du isst im Durchschnitt über deinem Ziel. Versuche kleinere Portionen.');
+    }
+    if (totalProtein < 50) {
+      tips.push('🥩 Tipp: Erhöhe deine Proteinzufuhr für bessere Sättigung (Ziel: 50-80g täglich).');
+    }
+    if (totalCarbs > 250) {
+      tips.push('🍞 Tipp: Reduziere Kohlenhydrate und ersetze sie durch Gemüse oder Vollkornprodukte.');
+    }
+    if (todayData.entries.filter(e => e.category === 'snacks').length > 3) {
+      tips.push('🍎 Tipp: Zu viele Snacks! Setze auf 2-3 gesunde Snacks pro Tag.');
+    }
+    if (bmi > 25) {
+      tips.push('⚖️ Dein BMI ist leicht erhöht. Ein Kaloriendefizit von 300-500 kcal täglich hilft beim Abnehmen.');
+    }
+    if (remaining < -500) {
+      tips.push('⚠️ Du hast dein Ziel stark überschritten. Morgen wieder mit frischer Motivation starten!');
+    }
+    if (tips.length === 0) {
+      tips.push('✅ Großartig! Du bist auf einem guten Weg. Weiter so!');
+    }
+    
+    return tips;
+  };
+
+  const categoryIcons = {
+    breakfast: <Coffee className="w-5 h-5" />,
+    lunch: <Utensils className="w-5 h-5" />,
+    dinner: <Moon className="w-5 h-5" />,
+    snacks: <Apple className="w-5 h-5" />
+  };
+
+  const categoryNames = {
+    breakfast: 'Frühstück',
+    lunch: 'Mittagessen',
+    dinner: 'Abendessen',
+    snacks: 'Snacks'
+  };
+
+  const getAIResponse = async (userMessage) => {
+    const context = {
+      totalCalories,
+      goal,
+      remaining,
+      bmi,
+      userWeight,
+      targetWeight,
+      height,
+      todayEntries: todayData.entries.length,
+      weekAverage: getLast7Days().reduce((sum, d) => sum + d.kalorien, 0) / 7,
+      totalProtein,
+      totalCarbs,
+      totalFat
+    };
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `Du bist ein freundlicher Ernährungsberater-Chatbot für eine Kalorientracker-App. 
+              
+Aktuelle Nutzerdaten:
+- Heutige Kalorien: ${context.totalCalories} von ${context.goal} kcal
+- Verbleibend: ${context.remaining} kcal
+- BMI: ${context.bmi}
+- Gewicht: ${context.userWeight} kg, Ziel: ${context.targetWeight} kg
+- Größe: ${context.height} cm
+- Einträge heute: ${context.todayEntries}
+- Wochendurchschnitt: ${context.weekAverage.toFixed(0)} kcal/Tag
+- Protein: ${context.totalProtein}g, Kohlenhydrate: ${context.totalCarbs}g, Fett: ${context.totalFat}g
+
+Beantworte die folgende Frage kurz, freundlich und hilfreich auf Deutsch. Gib praktische Tipps zur Ernährung und Motivation:
+
+"${userMessage}"`
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      return data.content[0].text;
+    } catch (error) {
+      return 'Entschuldigung, ich konnte deine Anfrage gerade nicht bearbeiten. Bitte versuche es später erneut.';
+    }
+  };
+
+  const handleChatSubmit = async () => {
+    if (!chatInput.trim()) return;
+
+    const userMsg = { role: 'user', text: chatInput };
+    setChatMessages([...chatMessages, userMsg]);
+    setChatInput('');
+    setIsTyping(true);
+
+    const aiResponse = await getAIResponse(chatInput);
+    
+    setIsTyping(false);
+    setChatMessages(prev => [...prev, { role: 'assistant', text: aiResponse }]);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-6xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-xl p-6 mb-6">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                <Target className="text-indigo-600" />
+                Kalorientracker Pro
+              </h1>
+              <p className="text-gray-600">Dein persönlicher Ernährungsbegleiter</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setView('today')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  view === 'today' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Heute
+              </button>
+              <button
+                onClick={() => setView('week')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  view === 'week' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Woche
+              </button>
+              <button
+                onClick={() => setView('settings')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  view === 'settings' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Einstellungen
+              </button>
+            </div>
+          </div>
+
+          {view === 'today' && (
+            <>
+              <div className="grid md:grid-cols-2 gap-6 mb-6">
+                <div className="bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl p-6 text-white">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <p className="text-indigo-100 text-sm mb-1">Verbraucht</p>
+                      <p className="text-4xl font-bold">{totalCalories}</p>
+                      <p className="text-indigo-100 text-sm">von {goal} kcal</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-indigo-100 text-sm mb-1">Verbleibend</p>
+                      <p className="text-3xl font-bold flex items-center gap-2">
+                        {remaining >= 0 ? <TrendingUp className="w-6 h-6" /> : <TrendingDown className="w-6 h-6" />}
+                        {Math.abs(remaining)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="bg-white/20 rounded-full h-3 overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${percentage > 100 ? 'bg-red-400' : 'bg-white'}`}
+                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-indigo-100 mt-2">{percentage.toFixed(0)}% des Tagesziels</p>
+                </div>
+
+                <div className="bg-gradient-to-r from-green-500 to-teal-500 rounded-xl p-6 text-white">
+                  <p className="text-green-100 text-sm mb-3">Makronährstoffe</p>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span>Protein:</span>
+                      <span className="font-bold">{totalProtein.toFixed(1)}g</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Kohlenhydrate:</span>
+                      <span className="font-bold">{totalCarbs.toFixed(1)}g</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Fett:</span>
+                      <span className="font-bold">{totalFat.toFixed(1)}g</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 mb-6">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-3">Lebensmittel hinzufügen</h2>
+                  
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Schnellauswahl</label>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.keys(foodDatabase).slice(0, 6).map(food => (
+                        <button
+                          key={food}
+                          onClick={() => selectFood(food)}
+                          className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm hover:bg-indigo-200 transition-colors"
+                        >
+                          {food}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Kategorie</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {Object.keys(categoryNames).map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setCategory(cat)}
+                          className={`p-2 rounded-lg flex flex-col items-center gap-1 transition-colors ${
+                            category === cat ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {categoryIcons[cat]}
+                          <span className="text-xs">{categoryNames[cat]}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Lebensmittel"
+                    value={foodName}
+                    onChange={(e) => setFoodName(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent mb-2"
+                  />
+                  
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <input
+                      type="number"
+                      placeholder="Kalorien"
+                      value={calories}
+                      onChange={(e) => setCalories(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Protein (g)"
+                      value={protein}
+                      onChange={(e) => setProtein(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Kohlenhydrate (g)"
+                      value={carbs}
+                      onChange={(e) => setCarbs(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Fett (g)"
+                      value={fat}
+                      onChange={(e) => setFat(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={addEntry}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Hinzufügen
+                  </button>
+                </div>
+
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <Lightbulb className="text-yellow-500" />
+                    Tipps & Empfehlungen
+                  </h2>
+                  <div className="bg-yellow-50 rounded-lg p-4 space-y-2">
+                    {getTips().map((tip, i) => (
+                      <p key={i} className="text-gray-700">{tip}</p>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 bg-blue-50 rounded-lg p-4">
+                    <h3 className="font-semibold text-gray-800 mb-2">Deine Stats</h3>
+                    <div className="space-y-1 text-sm">
+                      <p><strong>BMI:</strong> {bmi} {bmi < 18.5 ? '(Untergewicht)' : bmi < 25 ? '(Normalgewicht)' : bmi < 30 ? '(Übergewicht)' : '(Adipositas)'}</p>
+                      <p><strong>Empfohlenes Tagesziel:</strong> {calculateCalorieGoal()} kcal</p>
+                      <p><strong>Gewicht heute:</strong> 
+                        <input 
+                          type="number" 
+                          value={todayData.weight || ''} 
+                          onChange={(e) => updateWeight(e.target.value)}
+                          placeholder="kg"
+                          className="ml-2 w-16 px-2 py-1 border rounded"
+                        />
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-3">Heutige Einträge</h2>
+                  {todayData.entries.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Noch keine Einträge vorhanden</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {todayData.entries.map((entry) => (
+                        <div key={entry.id} className="flex items-center justify-between bg-gray-50 p-4 rounded-lg hover:bg-gray-100 transition-colors">
+                          <div className="flex items-center gap-3 flex-1">
+                            <div className="text-indigo-600">{categoryIcons[entry.category]}</div>
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-800">{entry.name}</p>
+                              <p className="text-xs text-gray-500">{entry.time} • {categoryNames[entry.category]}</p>
+                              {(entry.protein > 0 || entry.carbs > 0 || entry.fat > 0) && (
+                                <p className="text-xs text-gray-600 mt-1">
+                                  P: {entry.protein}g | K: {entry.carbs}g | F: {entry.fat}g
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-semibold text-indigo-600">{entry.calories} kcal</span>
+                            <button onClick={() => deleteEntry(entry.id)} className="text-red-500 hover:text-red-700 transition-colors">
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-800 mb-3">Verteilung nach Mahlzeiten</h2>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={getCategoryData()}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="wert" fill="#6366f1" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </>
+          )}
+
+          {view === 'week' && (
+            <div>
+              <h2 className="text-2xl font-semibold text-gray-800 mb-4">Wochenübersicht</h2>
+              
+              <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl p-6 text-white mb-6">
+                <h3 className="text-xl font-semibold mb-4">Kalorienverlauf (7 Tage)</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={getLast7Days()}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff40" />
+                    <XAxis dataKey="date" stroke="#fff" />
+                    <YAxis stroke="#fff" />
+                    <Tooltip contentStyle={{ background: '#333', border: 'none' }} />
+                    <Legend />
+                    <Line type="monotone" dataKey="kalorien" stroke="#fbbf24" strokeWidth={3} name="Kalorien" />
+                    <Line type="monotone" dataKey="ziel" stroke="#fff" strokeWidth={2} strokeDasharray="5 5" name="Ziel" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-green-50 rounded-xl p-6">
+                  <h3 className="text-xl font-semibold text-gray-800 mb-4">Gewichtsverlauf</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={getLast7Days().filter(d => d.gewicht)}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis domain={['dataMin - 2', 'dataMax + 2']} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="gewicht" stroke="#10b981" strokeWidth={3} name="Gewicht (kg)" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-blue-50 rounded-xl p-6">
+                  <h3 className="text-xl font-semibold text-gray-800 mb-4">Wochenstatistik</h3>
+                  <div className="space-y-3">
+                    {(() => {
+                      const weekData = getLast7Days();
+                      const totalCal = weekData.reduce((sum, d) => sum + d.kalorien, 0);
+                      const avgCal = totalCal / 7;
+                      const daysOverGoal = weekData.filter(d => d.kalorien > goal).length;
+                      const daysUnderGoal = weekData.filter(d => d.kalorien < goal).length;
+                      
+                      return (
+                        <>
+                          <div className="bg-white p-4 rounded-lg">
+                            <p className="text-gray-600 text-sm">Durchschnitt pro Tag</p>
+                            <p className="text-2xl font-bold text-indigo-600">{avgCal.toFixed(0)} kcal</p>
+                          </div>
+                          <div className="bg-white p-4 rounded-lg">
+                            <p className="text-gray-600 text-sm">Gesamt diese Woche</p>
+                            <p className="text-2xl font-bold text-purple-600">{totalCal} kcal</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-green-100 p-3 rounded-lg">
+                              <p className="text-gray-600 text-xs">Unter Ziel</p>
+                              <p className="text-xl font-bold text-green-600">{daysUnderGoal} Tage</p>
+                            </div>
+                            <div className="bg-red-100 p-3 rounded-lg">
+                              <p className="text-gray-600 text-xs">Über Ziel</p>
+                              <p className="text-xl font-bold text-red-600">{daysOverGoal} Tage</p>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'settings' && (
+            <div>
+              <h2 className="text-2xl font-semibold text-gray-800 mb-6">Einstellungen</h2>
+              
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Kalorienziel</h3>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Tägliches Ziel (kcal)</label>
+                  <input
+                    type="number"
+                    value={goal}
+                    onChange={(e) => setGoal(parseInt(e.target.value) || 0)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <p className="text-sm text-gray-600 mt-2">Empfohlen: {calculateCalorieGoal()} kcal basierend auf deinen Daten</p>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Körperdaten</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Aktuelles Gewicht (kg)</label>
+                      <input
+                        type="number"
+                        value={userWeight}
+                        onChange={(e) => setUserWeight(parseFloat(e.target.value) || 70)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Zielgewicht (kg)</label>
+                      <input
+                        type="number"
+                        value={targetWeight}
+                        onChange={(e) => setTargetWeight(parseFloat(e.target.value) || 65)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Körpergröße (cm)</label>
+                      <input
+                        type="number"
+                        value={height}
+                        onChange={(e) => setHeight(parseInt(e.target.value) || 170)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <Bell className="text-indigo-600" />
+                    Benachrichtigungen
+                  </h3>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-700">Mahlzeiterinnerungen</p>
+                      <p className="text-sm text-gray-600">Erinnere mich an Frühstück, Mittag- und Abendessen</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setNotifications(!notifications);
+                        if (!notifications && Notification.permission === 'default') {
+                          Notification.requestPermission();
+                        }
+                      }}
+                      className={`relative w-14 h-7 rounded-full transition-colors ${
+                        notifications ? 'bg-indigo-600' : 'bg-gray-300'
+                      }`}
+                    >
+                      <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full transition-transform ${
+                        notifications ? 'translate-x-7' : ''
+                      }`} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    ⏰ Frühstück: 08:00 | Mittagessen: 12:30 | Abendessen: 18:00
+                  </p>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Lebensmittel-Datenbank</h3>
+                  <p className="text-sm text-gray-600 mb-3">Verfügbare Lebensmittel für Schnellauswahl:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.keys(foodDatabase).map(food => (
+                      <span key={food} className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs">
+                        {food}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 bg-red-50 border border-red-200 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-red-800 mb-2">Daten zurücksetzen</h3>
+                <p className="text-sm text-gray-600 mb-4">Achtung: Dies löscht alle gespeicherten Einträge und kann nicht rückgängig gemacht werden.</p>
+                <button
+                  onClick={() => {
+                    if (window.confirm('Wirklich alle Daten löschen?')) {
+                      setAllData({});
+                      localStorage.removeItem('calorieTrackerData');
+                    }
+                  }}
+                  className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg transition-colors"
+                >
+                  Alle Daten löschen
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* AI Chatbot */}
+        {!chatOpen && (
+          <button
+            onClick={() => setChatOpen(true)}
+            className="fixed bottom-6 right-6 bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 rounded-full shadow-2xl hover:scale-110 transition-transform z-50"
+          >
+            <MessageCircle className="w-7 h-7" />
+          </button>
+        )}
+
+        {chatOpen && (
+          <div className="fixed bottom-6 right-6 w-96 h-[600px] bg-white rounded-2xl shadow-2xl flex flex-col z-50">
+            <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4 rounded-t-2xl flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <MessageCircle className="w-6 h-6" />
+                <div>
+                  <h3 className="font-semibold">Ernährungsberater AI</h3>
+                  <p className="text-xs text-indigo-100">Immer für dich da</p>
+                </div>
+              </div>
+              <button onClick={() => setChatOpen(false)} className="hover:bg-white/20 p-1 rounded">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {chatMessages.length === 0 && (
+                <div className="text-center text-gray-500 mt-8">
+                  <Lightbulb className="w-12 h-12 mx-auto mb-3 text-yellow-500" />
+                  <p className="font-semibold mb-2">Hallo! 👋</p>
+                  <p className="text-sm">Ich bin dein persönlicher Ernährungsberater. Frag mich alles über:</p>
+                  <div className="mt-3 space-y-1 text-xs">
+                    <p>• Kalorienempfehlungen</p>
+                    <p>• Gesunde Ernährungstipps</p>
+                    <p>• Abnehm-Strategien</p>
+                    <p>• Nährwertinfos</p>
+                    <p>• Motivation & Support</p>
+                  </div>
+                </div>
+              )}
+              
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] p-3 rounded-2xl ${
+                    msg.role === 'user' 
+                      ? 'bg-indigo-600 text-white rounded-br-none' 
+                      : 'bg-gray-100 text-gray-800 rounded-bl-none'
+                  }`}>
+                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                  </div>
+                </div>
+              ))}
+              
+              {isTyping && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 text-gray-800 p-3 rounded-2xl rounded-bl-none">
+                    <div className="flex gap-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="p-4 border-t">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit()}
+                  placeholder="Stelle eine Frage..."
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+                <button
+                  onClick={handleChatSubmit}
+                  disabled={!chatInput.trim() || isTyping}
+                  className="bg-indigo-600 text-white p-2 rounded-full hover:bg-indigo-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2 text-center">Powered by Claude AI</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
